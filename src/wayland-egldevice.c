@@ -28,6 +28,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <stdio.h>
 
 #include "wayland-eglhandle.h"
 #include "wayland-eglutils.h"
@@ -40,6 +41,8 @@ WlEglDeviceDpy *wlGetInternalDisplay(WlEglPlatformData *data, EGLDeviceEXT devic
         EGL_NONE
     };
 
+    fprintf(stderr, "Entering wlGetInternalDisplay for device: %p\n", device);
+
     WlEglDeviceDpy *devDpy = NULL;
     const EGLint *attribs = NULL;
     const char *drmName = NULL, *renderName = NULL;
@@ -48,7 +51,10 @@ WlEglDeviceDpy *wlGetInternalDisplay(WlEglPlatformData *data, EGLDeviceEXT devic
     // First, see if we've already created an EGLDisplay for this device.
     wl_list_for_each(devDpy, &data->deviceDpyList, link) {
         if (devDpy->data == data && devDpy->eglDevice == device) {
-            return devDpy;
+          fprintf(stderr, "devDpy: %p\n", devDpy);
+          fprintf(stderr, "devDpy->data: %p\n", devDpy->data);
+          fprintf(stderr, "devDpy->eglDevice: %p\n", devDpy->eglDevice);
+          return devDpy;
         }
     }
 
