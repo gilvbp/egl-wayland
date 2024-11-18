@@ -672,9 +672,9 @@ eglstream_display_handle_swapinterval_override(
     wl_list_for_each(surf, &dpy->wlEglSurfaceList, link) {
         if (surf->ctx.wlStreamResource == streamResource) {
             WlEglPlatformData *pData = surf->wlEglDpy->data;
-            EGLDisplay         dpy   = surf->wlEglDpy->devDpy->eglDisplay;
+            EGLDisplay         dpy1   = surf->wlEglDpy->devDpy->eglDisplay;
 
-            if (pData->egl.swapInterval(dpy, swapinterval)) {
+            if (pData->egl.swapInterval(dpy1, swapinterval)) {
                 surf->swapInterval = swapinterval;
             }
 
