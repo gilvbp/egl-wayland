@@ -41,6 +41,7 @@
 #include <sys/mman.h>
 #include <xf86drm.h>
 #include <dlfcn.h>
+#include <stdio.h>
 
 typedef struct WlServerProtocolsRec {
     EGLBoolean hasEglStream;
@@ -79,42 +80,88 @@ EGLBoolean wlEglIsValidNativeDisplayExport(void *data, void *nativeDpy)
     return wlEglIsWaylandDisplay(nativeDpy);
 }
 
+#include <stdio.h>
+#include <EGL/egl.h>
+#include "wayland-egldisplay.h" // Assuming the required headers are included here
+
 EGLBoolean wlEglBindDisplaysHook(void *data, EGLDisplay dpy, void *nativeDpy)
 {
     /* Retrieve extension string and device name before taking external API lock */
-    const char *exts = ((WlEglPlatformData *)data)->egl.queryString(dpy, EGL_EXTENSIONS),
-               *dev_name = wl_drm_get_dev_name(data, dpy);
+    fprintf(stderr, "Entering wlEglBindDisplaysHook: data=%p, dpy=%p, nativeDpy=%p\n", data, dpy, nativeDpy);
+
+    const char *exts = NULL;
+    const char *dev_name = NULL;
     EGLBoolean res = EGL_FALSE;
 
-    wlExternalApiLock();
+    // Validate inputs
+    if (!data || !dpy || !nativeDpy) {
+        fprintf(stderr, "Invalid arguments passed to wlEglBindDisplaysHook: data=%p, dpy=%p, nativeDpy=%p\n", data, dpy, nativeDpy);
+        return EGL_FALSE;
+    }
 
+    // Retrieve EGL extensions
+    exts = ((WlEglPlatformData *)data)->egl.queryString(dpy, EGL_EXTENSIONS);
+    if (!exts) {
+        fprintf(stderr, "EGL queryString failed: extensions string is NULL\n");
+        return EGL_FALSE;
+    }
+    fprintf(stderr, "EGL extensions retrieved: %s\n", exts);
+
+    // Retrieve DRM device name
+    dev_name = wl_drm_get_dev_name(data, dpy);
+    if (!dev_name) {
+        fprintf(stderr, "Failed to get DRM device name from wl_drm\n");
+        return EGL_FALSE;
+    }
+    fprintf(stderr, "DRM device name: %s\n", dev_name);
+
+    // Lock API and attempt binding
+    wlExternalApiLock();
     res = wl_eglstream_display_bind((WlEglPlatformData *)data,
                                     (struct wl_display *)nativeDpy,
                                     dpy, exts, dev_name);
-
+    if (!res) {
+        fprintf(stderr, "Failed to bind EGL display to Wayland display\n");
+    } else {
+        fprintf(stderr, "Successfully bound EGL display to Wayland display\n");
+    }
     wlExternalApiUnlock();
 
+    fprintf(stderr, "Exiting wlEglBindDisplaysHook: result=%d\n", res);
     return res;
 }
 
 EGLBoolean wlEglUnbindDisplaysHook(EGLDisplay dpy, void *nativeDpy)
 {
+    fprintf(stderr, "Entering wlEglUnbindDisplaysHook: dpy=%p, nativeDpy=%p\n", dpy, nativeDpy);
+
     struct wl_eglstream_display *wlStreamDpy;
     EGLBoolean res = EGL_FALSE;
 
-    wlExternalApiLock();
+    // Validate inputs
+    if (!dpy || !nativeDpy) {
+        fprintf(stderr, "Invalid arguments passed to wlEglUnbindDisplaysHook: dpy=%p, nativeDpy=%p\n", dpy, nativeDpy);
+        return EGL_FALSE;
+    }
 
+    // Lock API and attempt unbinding
+    wlExternalApiLock();
     wlStreamDpy = wl_eglstream_display_get(dpy);
-    if (wlStreamDpy &&
-        (wlStreamDpy->wlDisplay == (struct wl_display *)nativeDpy)) {
+    if (!wlStreamDpy) {
+        fprintf(stderr, "No EGLStream display found for EGLDisplay: %p\n", dpy);
+    } else if (wlStreamDpy->wlDisplay != (struct wl_display *)nativeDpy) {
+        fprintf(stderr, "Mismatch between Wayland displays during unbind\n");
+    } else {
+        fprintf(stderr, "Unbinding EGLStream display: %p\n", wlStreamDpy);
         wl_eglstream_display_unbind(wlStreamDpy);
         res = EGL_TRUE;
     }
-
     wlExternalApiUnlock();
 
+    fprintf(stderr, "Exiting wlEglUnbindDisplaysHook: result=%d\n", res);
     return res;
 }
+
 
 static void
 wlEglDestroyFormatSet(WlEglDmaBufFormatSet *set)
@@ -413,9 +460,17 @@ static const struct zwp_linux_dmabuf_feedback_v1_listener dmabuf_feedback_listen
 int
 WlEglRegisterFeedback(WlEglDmaBufFeedback *feedback)
 {
-    return zwp_linux_dmabuf_feedback_v1_add_listener(feedback->wlDmaBufFeedback,
-                                                     &dmabuf_feedback_listener,
-                                                     feedback);
+    fprintf(stderr, "Registering DMA-BUF feedback: %p\n", feedback->wlDmaBufFeedback);
+
+    int result = zwp_linux_dmabuf_feedback_v1_add_listener(feedback->wlDmaBufFeedback,
+                                                           &dmabuf_feedback_listener,
+                                                           feedback);
+    if (result != 0) {
+        fprintf(stderr, "Failed to register DMA-BUF feedback listener\n");
+    } else {
+        fprintf(stderr, "Successfully registered DMA-BUF feedback listener\n");
+    }
+    return result;
 }
 
 static void
@@ -427,43 +482,66 @@ registry_handle_global(void *data,
 {
     WlEglDisplay *display = (WlEglDisplay *)data;
 
+    fprintf(stderr, "Global registry: interface=%s, name=%u, version=%u\n", interface, name, version);
+
     if (strcmp(interface, "wl_eglstream_display") == 0) {
+        fprintf(stderr, "Binding wl_eglstream_display\n");
         display->wlStreamDpy = wl_registry_bind(registry,
                                                 name,
                                                 &wl_eglstream_display_interface,
                                                 1);
+        if (!display->wlStreamDpy) {
+            fprintf(stderr, "Failed to bind wl_eglstream_display\n");
+        }
     } else if (strcmp(interface, "wl_eglstream_controller") == 0) {
+        fprintf(stderr, "Binding wl_eglstream_controller, version=%u\n", version);
         display->wlStreamCtl = wl_registry_bind(registry,
                                                 name,
                                                 &wl_eglstream_controller_interface,
                                                 version > 1 ? 2 : 1);
         display->wlStreamCtlVer = version;
+        if (!display->wlStreamCtl) {
+            fprintf(stderr, "Failed to bind wl_eglstream_controller\n");
+        }
     } else if (strcmp(interface, "zwp_linux_dmabuf_v1") == 0) {
-        /*
-         * Version 3 added format modifier support, which the dmabuf
-         * support in this library relies on.
-         */
+        fprintf(stderr, "Binding zwp_linux_dmabuf_v1, version=%u\n", version);
         if (version >= 3) {
             display->wlDmaBuf = wl_registry_bind(registry,
                                                  name,
                                                  &zwp_linux_dmabuf_v1_interface,
                                                  version > 3 ? 4 : 3);
+            if (!display->wlDmaBuf) {
+                fprintf(stderr, "Failed to bind zwp_linux_dmabuf_v1\n");
+            }
+        } else {
+            fprintf(stderr, "Skipping zwp_linux_dmabuf_v1: version < 3\n");
         }
         display->dmaBufProtocolVersion = version;
     } else if (strcmp(interface, "wp_presentation") == 0) {
+        fprintf(stderr, "Binding wp_presentation\n");
         display->wpPresentation = wl_registry_bind(registry,
                                                    name,
                                                    &wp_presentation_interface,
                                                    version);
+        if (!display->wpPresentation) {
+            fprintf(stderr, "Failed to bind wp_presentation\n");
+        }
     } else if (strcmp(interface, "wp_linux_drm_syncobj_manager_v1") == 0 &&
                display->supports_native_fence_sync &&
                display->supports_explicit_sync) {
+        fprintf(stderr, "Binding wp_linux_drm_syncobj_manager_v1\n");
         display->wlDrmSyncobj = wl_registry_bind(registry,
                                                  name,
                                                  &wp_linux_drm_syncobj_manager_v1_interface,
                                                  1);
+        if (!display->wlDrmSyncobj) {
+            fprintf(stderr, "Failed to bind wp_linux_drm_syncobj_manager_v1\n");
+        }
+    } else {
+        fprintf(stderr, "Unknown interface: %s\n", interface);
     }
 }
+
 
 static void
 registry_handle_global_remove(void *data,
@@ -612,29 +690,36 @@ registry_handle_global_check_protocols(
                        struct wl_registry *registry,
                        uint32_t name,
                        const char *interface,
-                       uint32_t version)
-{
+                       uint32_t version){
     WlServerProtocols *protocols = (WlServerProtocols *)data;
-    (void) registry;
-    (void) name;
-    (void) version;
+    fprintf(stderr, "Registry event: interface=%s, version=%u\n", interface, version);
 
     if (strcmp(interface, "wl_eglstream_display") == 0) {
         protocols->hasEglStream = EGL_TRUE;
+        fprintf(stderr, "Found wl_eglstream_display protocol\n");
     }
 
-    if ((strcmp(interface, "zwp_linux_dmabuf_v1") == 0) &&
-        (version >= 3)) {
+    if (strcmp(interface, "zwp_linux_dmabuf_v1") == 0 && version >= 3) {
         protocols->hasDmaBuf = EGL_TRUE;
-        /* Version 4 introduced default_feedback which allows us to determine the device used by the compositor */
+        fprintf(stderr, "Found zwp_linux_dmabuf_v1 protocol (version %u)\n", version);
         if (version >= 4) {
             protocols->wlDmaBuf = wl_registry_bind(registry, name, &zwp_linux_dmabuf_v1_interface, 4);
+            if (protocols->wlDmaBuf) {
+                fprintf(stderr, "Bound zwp_linux_dmabuf_v1 interface (version 4)\n");
+            } else {
+                fprintf(stderr, "Failed to bind zwp_linux_dmabuf_v1 interface\n");
+            }
         }
     }
 
-    if ((strcmp(interface, "wl_drm") == 0) && (version >= 2)) {
+    if (strcmp(interface, "wl_drm") == 0 && version >= 2) {
         protocols->wlDrm = wl_registry_bind(registry, name, &wl_drm_interface, 2);
-        wl_drm_add_listener(protocols->wlDrm, &drmListener, protocols);
+        if (protocols->wlDrm) {
+            fprintf(stderr, "Bound wl_drm interface\n");
+            wl_drm_add_listener(protocols->wlDrm, &drmListener, protocols);
+        } else {
+            fprintf(stderr, "Failed to bind wl_drm interface\n");
+        }
     }
 }
 
@@ -872,49 +957,65 @@ static EGLBoolean checkNvidiaDrmDevice(WlServerProtocols *protocols)
     drmVersion *version = NULL;
     drmDevice *dev = NULL;
 
+
+    fprintf(stderr, "Checking NVIDIA DRM device...\n");
+
     if (protocols->drm_name == NULL) {
+        fprintf(stderr, "DRM name is NULL. Skipping check.\n");
         goto done;
     }
 
+    fprintf(stderr, "Opening DRM device: %s\n", protocols->drm_name);
     fd = open(protocols->drm_name, O_RDWR);
     if (fd < 0) {
+        perror("Failed to open DRM device");
         goto done;
     }
 
+    fprintf(stderr, "Calling drmGetDevice...\n");
     if (drmGetDevice(fd, &dev) == 0) {
+        fprintf(stderr, "drmGetDevice succeeded. Available nodes: %d\n", dev->available_nodes);
         if (dev->available_nodes & (1 << DRM_NODE_RENDER)) {
-            // Make sure that drm_name is the path to the render node, which is
-            // what wlEglGetPlatformDisplayExport checks for.
+            fprintf(stderr, "Render node found: %s\n", dev->nodes[DRM_NODE_RENDER]);
+            // Ensure protocols->drm_name points to the render node
             if (strcmp(protocols->drm_name, dev->nodes[DRM_NODE_RENDER]) != 0) {
+                fprintf(stderr, "Updating DRM name to render node: %s\n", dev->nodes[DRM_NODE_RENDER]);
                 free(protocols->drm_name);
                 protocols->drm_name = strdup(dev->nodes[DRM_NODE_RENDER]);
                 if (protocols->drm_name == NULL) {
+                    fprintf(stderr, "Failed to update DRM name to render node\n");
                     goto done;
                 }
             }
         }
 
-        /*
-         * Since we've already called drmGetDevice anyway, if this is a PCI
-         * device, then check if the vendor ID is for NVIDIA. If this is a
-         * Tegra device, though, then it won't be a PCI device, so we'll need
-         * to call drmGetVesion and look at the driver name instead.
-         */
+        fprintf(stderr, "Checking if device is NVIDIA PCI...\n");
         if (dev->bustype == DRM_BUS_PCI && dev->deviceinfo.pci->vendor_id == 0x10de) {
+            fprintf(stderr, "NVIDIA PCI device detected. Vendor ID: 0x10de\n");
             result = EGL_TRUE;
         }
+    } else {
+        fprintf(stderr, "drmGetDevice failed.\n");
     }
 
     if (!result) {
+        fprintf(stderr, "Checking DRM version for NVIDIA drivers...\n");
         version = drmGetVersion(fd);
         if (version != NULL && version->name != NULL) {
+            fprintf(stderr, "DRM version name: %s\n", version->name);
             if (strcmp(version->name, "nvidia-drm") == 0
-                    || strcmp(version->name, "tegra-udrm") == 0
-                    || strcmp(version->name, "tegra") == 0) {
+                || strcmp(version->name, "tegra-udrm") == 0
+                || strcmp(version->name, "tegra") == 0) {
+                fprintf(stderr, "NVIDIA DRM driver detected: %s\n", version->name);
                 result = EGL_TRUE;
+            } else {
+                fprintf(stderr, "Driver is not NVIDIA. Detected: %s\n", version->name);
             }
+        } else {
+            fprintf(stderr, "Failed to retrieve DRM version.\n");
         }
     }
+
 
 done:
     if (version != NULL) {
