@@ -135,15 +135,12 @@ static void wlFreeInternalDisplay(WlEglDeviceDpy *devDpy)
   if (devDpy->initCount > 0) {
     fprintf(stderr, "Terminating EGL display for device: %p\n", devDpy->eglDevice);
     devDpy->data->egl.terminate(devDpy->eglDisplay);
-  } else {
-    fprintf(stderr, "No initialization count for display: %p, skipping termination.\n", devDpy->eglDevice);
   }
 
   wl_list_remove(&devDpy->link);
   fprintf(stderr, "Removed internal display from list: %p\n", devDpy);
 
   free(devDpy);
-  fprintf(stderr, "Successfully freed internal display: %p\n", devDpy);
 }
 
 void wlFreeAllInternalDisplays(WlEglPlatformData *data)
