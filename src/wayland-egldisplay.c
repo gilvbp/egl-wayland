@@ -1048,6 +1048,7 @@ EGLDisplay wlEglGetPlatformDisplayExport(void *data,
     const char *primeRenderOffloadStr;
 
     EGLDeviceEXT requestedDevice = EGL_NO_DEVICE_EXT;
+    EGLDeviceEXT serverDevice = EGL_NO_DEVICE_EXT;
     EGLBoolean usePrimeRenderOffload = EGL_FALSE;
     EGLBoolean isServerNV;
     const char *drmName = NULL;
@@ -1140,50 +1141,106 @@ EGLDisplay wlEglGetPlatformDisplayExport(void *data,
 
     fprintf(stderr, "[DEBUG] Protocolos do servidor obtidos\n");
 
+    printf("Inicializando verificação de dispositivos NVIDIA...\n");
+
     isServerNV = checkNvidiaDrmDevice(&protocols);
+    printf("Resultado de checkNvidiaDrmDevice: %s\n", isServerNV ? "true" : "false");
+
     if (!usePrimeRenderOffload && requestedDevice == EGL_NO_DEVICE_EXT) {
+        printf("Offload não está configurado e nenhum dispositivo foi requisitado. Verificando GPU do servidor...\n");
         if (!isServerNV) {
-            fprintf(stderr, "[DEBUG] O servidor não está em uma GPU NVIDIA\n");
             err = EGL_SUCCESS;
+            printf("Servidor não está rodando em uma GPU NVIDIA. Encerrando com sucesso.\n");
             goto fail;
         }
     }
 
     if (!protocols.hasEglStream && !protocols.hasDmaBuf) {
-        fprintf(stderr, "[ERROR] O compositor não suporta EGLStream nem DMA-BUF\n");
+        printf("Nenhum protocolo EGLStream ou DmaBuf encontrado. Falha.\n");
         goto fail;
     }
 
+    printf("Obtendo o número de dispositivos disponíveis...\n");
     if (!pData->egl.queryDevices(-1, NULL, &numDevices) || numDevices == 0) {
-        fprintf(stderr, "[ERROR] Falha ao consultar dispositivos EGL\n");
+        printf("Nenhum dispositivo encontrado ou erro na consulta de dispositivos. Falha.\n");
         goto fail;
     }
 
-    fprintf(stderr, "[DEBUG] Número de dispositivos EGL disponíveis: %d\n", numDevices);
-
+    printf("Número de dispositivos encontrados: %d\n", numDevices);
     eglDeviceList = calloc(numDevices, sizeof(*eglDeviceList));
     if (!eglDeviceList) {
-        fprintf(stderr, "[ERROR] Falha ao alocar memória para lista de dispositivos\n");
+        printf("Falha ao alocar memória para a lista de dispositivos. Falha.\n");
         goto fail;
     }
 
+    printf("Consultando dispositivos EGL...\n");
     if (!pData->egl.queryDevices(numDevices, eglDeviceList, &numDevices) || numDevices == 0) {
-        fprintf(stderr, "[ERROR] Falha ao consultar dispositivos EGL\n");
+        printf("Erro ao consultar dispositivos EGL. Falha.\n");
         goto fail;
     }
+
 
     for (i = 0; i < numDevices; i++) {
-        const char *dev_name = pData->egl.queryDeviceString(eglDeviceList[i], EGL_DRM_RENDER_NODE_FILE_EXT);
-        fprintf(stderr, "[DEBUG] Dispositivo EGL encontrado: %s\n", dev_name);
+            EGLDeviceEXT tmpDev = eglDeviceList[i];
+            serverDevice = tmpDev;
+            display->devDpy = wlGetInternalDisplay(pData, tmpDev);
+    }
+    eglDevice = serverDevice;
+
+
+    if (requestedDevice != EGL_NO_DEVICE_EXT) {
+        printf("Dispositivo específico requisitado. Validando...\n");
+        EGLBoolean found = EGL_FALSE;
+        for (i = 0; i < numDevices; i++) {
+            if (eglDeviceList[i] == requestedDevice) {
+                found = EGL_TRUE;
+                printf("Dispositivo requisitado encontrado.\n");
+                break;
+            }
+        }
+        if (!found) {
+            printf("Dispositivo requisitado inválido ou não encontrado.\n");
+            if (!usePrimeRenderOffload) {
+                err = EGL_BAD_MATCH;
+                goto fail;
+            }
+        }
     }
 
-    display->devDpy = wlGetInternalDisplay(pData, eglDevice);
-    if (display->devDpy == NULL) {
-        fprintf(stderr, "[ERROR] Falha ao obter display interno\n");
+    if (eglDevice == EGL_NO_DEVICE_EXT && usePrimeRenderOffload) {
+        printf("Usando __NV_PRIME_RENDER_OFFLOAD. Selecionando o primeiro dispositivo NVIDIA...\n");
+        eglDevice = eglDeviceList[0];
+    }
+
+    if (eglDevice == EGL_NO_DEVICE_EXT) {
+        printf("Nenhum dispositivo disponível para renderização. Falha.\n");
         goto fail;
     }
 
-    drmName = display->data->egl.queryDeviceString(display->devDpy->eglDevice, EGL_DRM_DEVICE_FILE_EXT);
+    if (eglDevice != serverDevice) {
+        printf("Renderizando em dispositivo diferente do servidor. PRIME offloading será usado.\n");
+        display->primeRenderOffload = EGL_TRUE;
+    }
+
+    printf("Inicializando display interno...\n");
+
+    if (display->devDpy == NULL) {
+        printf("Falha ao inicializar o display interno. Falha.\n");
+        goto fail;
+    }
+
+    if (!wlEglInitializeMutex(&display->mutex)) {
+        printf("Falha ao inicializar mutex. Falha.\n");
+        goto fail;
+    }
+
+    printf("Inicialização concluída com sucesso. Dispositivo EGL pronto para uso.\n");
+    display->refCount = 1;
+    WL_LIST_INIT(&display->wlEglSurfaceList);
+
+    /* Get the DRM device in use */
+    drmName = display->data->egl.queryDeviceString(display->devDpy->eglDevice,
+                                                   EGL_DRM_DEVICE_FILE_EXT);
     if (!drmName) {
         fprintf(stderr, "[ERROR] Falha ao obter nome do dispositivo DRM\n");
         goto fail;
