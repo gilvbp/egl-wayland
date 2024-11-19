@@ -1225,7 +1225,7 @@ EGLDisplay wlEglGetPlatformDisplayExport(void *data,
     printf("Inicializando display interno...\n");
 
     if (display->devDpy == NULL) {
-        printf("Falha ao inicializar o display interno. Falha.\n");
+        printf("Falha ao inicializar o display interno. Falha .\n");
         goto fail;
     }
 
