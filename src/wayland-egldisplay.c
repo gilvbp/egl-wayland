@@ -1033,8 +1033,9 @@ done:
 EGLDisplay wlEglGetPlatformDisplayExport(void *data,
                                          EGLenum platform,
                                          void *nativeDpy,
-                                         const EGLAttrib *attribs)
-{
+                                         const EGLAttrib *attribs){
+    fprintf(stderr, "[DEBUG] Entrando no método wlEglGetPlatformDisplayExport\n");
+
     WlEglPlatformData     *pData           = (WlEglPlatformData *)data;
     WlEglDisplay          *display         = NULL;
     WlServerProtocols      protocols       = {};
@@ -1045,36 +1046,40 @@ EGLDisplay wlEglGetPlatformDisplayExport(void *data,
     EGLint                 err             = EGL_SUCCESS;
     EGLBoolean             useInitRefCount = EGL_FALSE;
     const char *primeRenderOffloadStr;
-    EGLDeviceEXT serverDevice = EGL_NO_DEVICE_EXT;
+
     EGLDeviceEXT requestedDevice = EGL_NO_DEVICE_EXT;
     EGLBoolean usePrimeRenderOffload = EGL_FALSE;
     EGLBoolean isServerNV;
     const char *drmName = NULL;
 
     if (platform != EGL_PLATFORM_WAYLAND_EXT) {
+        fprintf(stderr, "[ERROR] Plataforma inválida recebida: %d\n", platform);
         wlEglSetError(data, EGL_BAD_PARAMETER);
         return EGL_NO_DISPLAY;
     }
 
-    /* Check the attribute list. Any attributes are likely to require some
-     * special handling, so reject anything we don't recognize.
-     */
+    /* Check the attribute list */
     if (attribs) {
         for (i = 0; attribs[i] != EGL_NONE; i += 2) {
+
+
             if (attribs[i] == EGL_TRACK_REFERENCES_KHR) {
                 if (attribs[i + 1] == EGL_TRUE || attribs[i + 1] == EGL_FALSE) {
                     useInitRefCount = (EGLBoolean) attribs[i + 1];
                 } else {
+                    fprintf(stderr, "[ERROR] Atributo inválido para EGL_TRACK_REFERENCES_KHR\n");
                     wlEglSetError(data, EGL_BAD_ATTRIBUTE);
                     return EGL_NO_DISPLAY;
                 }
             } else if (attribs[i] == EGL_DEVICE_EXT) {
                 requestedDevice = (EGLDeviceEXT) attribs[i + 1];
                 if (requestedDevice == EGL_NO_DEVICE_EXT) {
+                    fprintf(stderr, "[ERROR] Dispositivo inválido recebido\n");
                     wlEglSetError(data, EGL_BAD_DEVICE_EXT);
                     return EGL_NO_DISPLAY;
                 }
             } else {
+
                 wlEglSetError(data, EGL_BAD_ATTRIBUTE);
                 return EGL_NO_DISPLAY;
             }
@@ -1082,13 +1087,14 @@ EGLDisplay wlEglGetPlatformDisplayExport(void *data,
     }
 
     wlExternalApiLock();
+    fprintf(stderr, "[DEBUG] Bloqueio externo aplicado\n");
 
-    /* First, check if we've got an existing display that matches. */
+    /* Check for existing displays */
     wl_list_for_each(display, &wlEglDisplayList, link) {
-        if ((display->nativeDpy == nativeDpy ||
-            (!nativeDpy && display->ownNativeDpy))
-            && display->useInitRefCount == useInitRefCount
-            && display->requestedDevice == requestedDevice) {
+        if ((display->nativeDpy == nativeDpy || (!nativeDpy && display->ownNativeDpy)) &&
+            display->useInitRefCount == useInitRefCount &&
+            display->requestedDevice == requestedDevice) {
+            fprintf(stderr, "[DEBUG] Display existente encontrado\n");
             wlExternalApiUnlock();
             return (EGLDisplay)display;
         }
@@ -1096,24 +1102,20 @@ EGLDisplay wlEglGetPlatformDisplayExport(void *data,
 
     display = calloc(1, sizeof(*display));
     if (!display) {
+        fprintf(stderr, "[ERROR] Falha ao alocar memória para display\n");
         err = EGL_BAD_ALLOC;
         goto fail;
     }
 
     display->data = pData;
-
-    display->nativeDpy   = nativeDpy;
+    display->nativeDpy = nativeDpy;
     display->useInitRefCount = useInitRefCount;
     display->requestedDevice = requestedDevice;
 
-    /* If default display is requested, create a new Wayland display connection
-     * and its corresponding internal EGLDisplay. Otherwise, check for existing
-     * associated EGLDisplay for the given Wayland display and if it doesn't
-     * exist, create a new one
-     */
     if (!display->nativeDpy) {
         display->nativeDpy = wl_display_connect(NULL);
         if (!display->nativeDpy) {
+            fprintf(stderr, "[ERROR] Falha ao conectar ao display Wayland\n");
             err = EGL_BAD_ALLOC;
             goto fail;
         }
@@ -1122,190 +1124,82 @@ EGLDisplay wlEglGetPlatformDisplayExport(void *data,
         wl_display_dispatch_pending(display->nativeDpy);
     }
 
+    fprintf(stderr, "[DEBUG] Conexão Wayland estabelecida\n");
+
     primeRenderOffloadStr = getenv("__NV_PRIME_RENDER_OFFLOAD");
     if (primeRenderOffloadStr && !strcmp(primeRenderOffloadStr, "1")) {
         usePrimeRenderOffload = EGL_TRUE;
+        fprintf(stderr, "[DEBUG] PRIME Render Offload ativado\n");
     }
 
-    /*
-     * This is where we check the supported protocols on the compositor,
-     * and bind to wl_drm to get the device name.
-     * protocols.drm_name will be allocated here if using wl_drm
-     */
     if (!getServerProtocolsInfo(display->nativeDpy, &protocols)) {
+        fprintf(stderr, "[ERROR] Falha ao obter informações dos protocolos do servidor\n");
         err = EGL_BAD_ALLOC;
         goto fail;
     }
 
-    // Check if the server is running on an NVIDIA device. This will also make
-    // sure that the device node that we're looking at is a render node,
-    // regardless of which node the server sends back.
+    fprintf(stderr, "[DEBUG] Protocolos do servidor obtidos\n");
+
     isServerNV = checkNvidiaDrmDevice(&protocols);
     if (!usePrimeRenderOffload && requestedDevice == EGL_NO_DEVICE_EXT) {
-        /*
-         * We're not configured to use any sort of GPU offloading, so we only
-         * support this display if the server is running on an NVIDIA GPU. Do
-         * this early, before we call eglQueryDevicesEXT. eglQueryDevicesEXT
-         * might have to power on the GPU's, which can be very slow.
-         */
         if (!isServerNV) {
+            fprintf(stderr, "[DEBUG] O servidor não está em uma GPU NVIDIA\n");
             err = EGL_SUCCESS;
             goto fail;
         }
     }
 
     if (!protocols.hasEglStream && !protocols.hasDmaBuf) {
+        fprintf(stderr, "[ERROR] O compositor não suporta EGLStream nem DMA-BUF\n");
         goto fail;
     }
 
-    /* Get the number of devices available */
     if (!pData->egl.queryDevices(-1, NULL, &numDevices) || numDevices == 0) {
+        fprintf(stderr, "[ERROR] Falha ao consultar dispositivos EGL\n");
         goto fail;
     }
+
+    fprintf(stderr, "[DEBUG] Número de dispositivos EGL disponíveis: %d\n", numDevices);
 
     eglDeviceList = calloc(numDevices, sizeof(*eglDeviceList));
     if (!eglDeviceList) {
+        fprintf(stderr, "[ERROR] Falha ao alocar memória para lista de dispositivos\n");
         goto fail;
     }
 
-    /*
-     * Now we need to find an EGLDevice. If __NV_PRIME_RENDER_OFFLOAD=1, we will use the
-     * first NVIDIA GPU returned by eglQueryDevices. Otherwise, if wl_drm is in use, we will
-     * try to find one that matches the device the compositor is using. We know that device
-     * is an nvidia device since we just checked that above.
-     */
     if (!pData->egl.queryDevices(numDevices, eglDeviceList, &numDevices) || numDevices == 0) {
+        fprintf(stderr, "[ERROR] Falha ao consultar dispositivos EGL\n");
         goto fail;
     }
 
-    // Try to find the device that the compositor is running on.
-    if (protocols.drm_name) {
-        for (i = 0; i < numDevices; i++) {
-            EGLDeviceEXT tmpDev = eglDeviceList[i];
-
-            /*
-             * To check against the wl_drm name, we need to check if we can use
-             * the drm extension
-             */
-            const char *dev_exts = display->data->egl.queryDeviceString(tmpDev,
-                    EGL_EXTENSIONS);
-            if (dev_exts && wlEglFindExtension("EGL_EXT_device_drm_render_node", dev_exts)) {
-                const char *dev_name = display->data->egl.queryDeviceString(tmpDev,
-                            EGL_DRM_RENDER_NODE_FILE_EXT);
-
-                if (dev_name) {
-                    /*
-                     * At this point we have gotten the name from wl_drm, gotten
-                     * the drm node from the EGLDevice. If they match, then
-                     * this is the final device to use, since it is the compositor's
-                     * device.
-                     */
-                    if (strcmp(dev_name, protocols.drm_name) == 0) {
-                        serverDevice = tmpDev;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    // By default, use whatever device the server is using.
-    eglDevice = serverDevice;
-
-    if (requestedDevice != EGL_NO_DEVICE_EXT) {
-        // If the app requested a specific device, then use it.
-        // Make sure that the requested device is a valid EGLDeviceEXT handle.
-        EGLBoolean found = EGL_FALSE;
-        for (i = 0; i < numDevices; i++) {
-            if (eglDeviceList[i] == requestedDevice) {
-                found = EGL_TRUE;
-                break;
-            }
-        }
-        if (found) {
-            if (serverDevice != EGL_NO_DEVICE_EXT && serverDevice != requestedDevice) {
-                /*
-                 * Don't allow NV -> NV offloading, because it doesn't
-                 * currently work in Weston or Mutter. Weston may try to use
-                 * the images as scanout buffers (which doesn't work), and
-                 * Mutter doesn't correctly handle external-only images.
-                 *
-                 * Without proper compositor support, This could still work if
-                 * the client either does a blit between devices into something
-                 * that the compositor can consume, or reads back the image
-                 * into an SHM buffer.
-                 */
-                err = EGL_BAD_MATCH;
-                goto fail;
-            }
-
-            eglDevice = requestedDevice;
-        } else if (!usePrimeRenderOffload) {
-            /*
-             * The EGL_DEVICE_EXT attribute doesn't match any NVIDIA device,
-             * but it might match a non-NV device. If the user requested GPU
-             * offloading, then we'll pick an NVIDIA device below. Otherwise,
-             * fail here so that another driver can handle it.
-             *
-             * We'll generate an EGL_BAD_MATCH error in this case --
-             * technically, it should be EGL_BAD_DEVICE_EXT if the device is
-             * not valid, or EGL_BAD_MATCH if the device is valid but we can't
-             * use it. We have no way to know if this is a valid device from
-             * Mesa, though, but assume that it is so that a non-buggy
-             * application can get useful feedback.
-             */
-            err = EGL_BAD_MATCH;
-            goto fail;
-        }
-    }
-
-    if (eglDevice == EGL_NO_DEVICE_EXT && usePrimeRenderOffload) {
-        /*
-         * If __NV_PRIME_RENDER_OFFLOAD is set, then use an NVIDIA device. It
-         * doesn't matter which one.
-         */
-        eglDevice = eglDeviceList[0];
-    }
-
-    if (eglDevice == EGL_NO_DEVICE_EXT) {
-        // If we couldn't find a device to render on, then fail.
-        goto fail;
-    }
-
-    if (eglDevice != serverDevice) {
-        /*
-         * If we're rendering with a different device than the compositor is
-         * using, then we'll need to use the PRIME offloading path.
-         */
-        display->primeRenderOffload = EGL_TRUE;
+    for (i = 0; i < numDevices; i++) {
+        const char *dev_name = pData->egl.queryDeviceString(eglDeviceList[i], EGL_DRM_RENDER_NODE_FILE_EXT);
+        fprintf(stderr, "[DEBUG] Dispositivo EGL encontrado: %s\n", dev_name);
     }
 
     display->devDpy = wlGetInternalDisplay(pData, eglDevice);
     if (display->devDpy == NULL) {
+        fprintf(stderr, "[ERROR] Falha ao obter display interno\n");
         goto fail;
     }
 
-    if (!wlEglInitializeMutex(&display->mutex)) {
-        goto fail;
-    }
-    display->refCount = 1;
-    WL_LIST_INIT(&display->wlEglSurfaceList);
-
-    /* Get the DRM device in use */
-    drmName = display->data->egl.queryDeviceString(display->devDpy->eglDevice,
-                                                   EGL_DRM_DEVICE_FILE_EXT);
+    drmName = display->data->egl.queryDeviceString(display->devDpy->eglDevice, EGL_DRM_DEVICE_FILE_EXT);
     if (!drmName) {
+        fprintf(stderr, "[ERROR] Falha ao obter nome do dispositivo DRM\n");
         goto fail;
     }
+
+    fprintf(stderr, "[DEBUG] Dispositivo DRM em uso: %s\n", drmName);
 
     display->drmFd = open(drmName, O_RDWR | O_CLOEXEC);
     if (display->drmFd < 0) {
+        fprintf(stderr, "[ERROR] Falha ao abrir o dispositivo DRM\n");
         goto fail;
     }
 
-    // The newly created WlEglDisplay has been set up properly, insert it
-    // in wlEglDisplayList.
     wl_list_insert(&wlEglDisplayList, &display->link);
+
+    fprintf(stderr, "[DEBUG] Display criado com sucesso\n");
 
     free(eglDeviceList);
     if (protocols.drm_name) {
@@ -1314,9 +1208,8 @@ EGLDisplay wlEglGetPlatformDisplayExport(void *data,
     wlExternalApiUnlock();
     return display;
 
-fail:
+    fail:
     wlExternalApiUnlock();
-
     free(eglDeviceList);
     free(protocols.drm_name);
 
@@ -1329,9 +1222,9 @@ fail:
         wlEglSetError(data, err);
     }
 
+    fprintf(stderr, "[ERROR] Saindo do método wlEglGetPlatformDisplayExport com falha\n");
     return EGL_NO_DISPLAY;
 }
-
 static void wlEglCheckDriverSyncSupport(WlEglDisplay *display)
 {
     EGLSyncKHR  eglSync = EGL_NO_SYNC_KHR;
@@ -1379,7 +1272,7 @@ static void wlEglCheckDriverSyncSupport(WlEglDisplay *display)
         display->data->egl.getError() == EGL_BAD_ATTRIBUTE) {
         display->supports_explicit_sync = true;
     }
-
+fprintf(stderr, "[ERROR] Saindo do método wlEglGetPlatformDisplayExport com falha\n");
 destroy:
     if (eglSync != EGL_NO_SYNC_KHR) {
         display->data->egl.destroySync(dpy, eglSync);
