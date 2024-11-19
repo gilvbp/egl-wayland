@@ -1045,12 +1045,12 @@ EGLDisplay wlEglGetPlatformDisplayExport(void *data,
     EGLDeviceEXT           eglDevice       = NULL;
     EGLint                 err             = EGL_SUCCESS;
     EGLBoolean             useInitRefCount = EGL_FALSE;
-    const char            *primeRenderOffloadStr;
-    EGLDeviceEXT           serverDevice    = EGL_NO_DEVICE_EXT;
-    EGLDeviceEXT           requestedDevice = EGL_NO_DEVICE_EXT;
-    EGLBoolean             usePrimeRenderOffload = EGL_FALSE;
-    EGLBoolean             isServerNV;
-    const char            *drmName = NULL;
+    const char *primeRenderOffloadStr;
+
+    EGLDeviceEXT requestedDevice = EGL_NO_DEVICE_EXT;
+    EGLBoolean usePrimeRenderOffload = EGL_FALSE;
+    EGLBoolean isServerNV;
+    const char *drmName = NULL;
 
     if (platform != EGL_PLATFORM_WAYLAND_EXT) {
         fprintf(stderr, "[ERROR] Plataforma inválida recebida: %d\n", platform);
@@ -1061,7 +1061,7 @@ EGLDisplay wlEglGetPlatformDisplayExport(void *data,
     /* Check the attribute list */
     if (attribs) {
         for (i = 0; attribs[i] != EGL_NONE; i += 2) {
-            fprintf(stderr, "[DEBUG] Atributo recebido: %d, Valor: %d\n", attribs[i], attribs[i + 1]);
+
 
             if (attribs[i] == EGL_TRACK_REFERENCES_KHR) {
                 if (attribs[i + 1] == EGL_TRUE || attribs[i + 1] == EGL_FALSE) {
@@ -1079,7 +1079,7 @@ EGLDisplay wlEglGetPlatformDisplayExport(void *data,
                     return EGL_NO_DISPLAY;
                 }
             } else {
-                fprintf(stderr, "[ERROR] Atributo desconhecido: %d\n", attribs[i]);
+
                 wlEglSetError(data, EGL_BAD_ATTRIBUTE);
                 return EGL_NO_DISPLAY;
             }
